@@ -28,6 +28,7 @@ type BurrowConfig struct {
 	General struct {
 		LogDir         string `gcfg:"logdir"`
 		LogConfig      string `gcfg:"logconfig"`
+		LogToConsole   bool   `gcfg:"logtoconsole"`
 		PIDFile        string `gcfg:"pidfile"`
 		ClientID       string `gcfg:"client-id"`
 		GroupBlacklist string `gcfg:"group-blacklist"`

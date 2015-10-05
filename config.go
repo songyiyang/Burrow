@@ -42,7 +42,6 @@ type BurrowConfig struct {
 		Brokers       []string `gcfg:"broker"`
 		BrokerPort    int      `gcfg:"broker-port"`
 		Zookeepers    []string `gcfg:"zookeeper"`
-		ZookeeperPort int      `gcfg:"zookeeper-port"`
 		ZookeeperPath string   `gcfg:"zookeeper-path"`
 		OffsetsTopic  string   `gcfg:"offsets-topic"`
 		ZookeeperOffsetPaths	[]string	`gcfg:"zookeeper-offsets-path"`
@@ -169,13 +168,10 @@ func ValidateConfig(app *ApplicationContext) error {
 				errs = append(errs, hostlistError)
 			}
 		}
-		if cfg.ZookeeperPort == 0 {
-			cfg.ZookeeperPort = 2181
-		}
 		if len(cfg.Zookeepers) == 0 {
 			errs = append(errs, fmt.Sprintf("No Zookeeper hosts specified for cluster %s", cluster))
 		} else {
-			hostlistError := checkHostlist(cfg.Zookeepers, cfg.ZookeeperPort, "Zookeeper")
+			hostlistError := checkHostlist(cfg.Zookeepers, 2181, "Zookeeper")
 			if hostlistError != "" {
 				errs = append(errs, hostlistError)
 			}

@@ -195,7 +195,6 @@ func handleClusterDetail(app *ApplicationContext, w http.ResponseWriter, cluster
 		Message: "cluster detail returned",
 		Cluster: HTTPResponseClusterDetailCluster{
 			Zookeepers:    app.Config.Kafka[cluster].Zookeepers,
-			ZookeeperPort: app.Config.Kafka[cluster].ZookeeperPort,
 			ZookeeperPath: app.Config.Kafka[cluster].ZookeeperPath,
 			Brokers:       app.Config.Kafka[cluster].Brokers,
 			BrokerPort:    app.Config.Kafka[cluster].BrokerPort,

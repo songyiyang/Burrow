@@ -33,7 +33,7 @@ type ZooKeeperOffsetClient struct {
 func NewZooKeeperOffsetClient(app *ApplicationContext, cluster string) (*ZooKeeperOffsetClient, error) {
 	zkhosts := make([]string, len(app.Config.Kafka[cluster].Zookeepers))
 	for i, host := range app.Config.Kafka[cluster].Zookeepers {
-		zkhosts[i] = fmt.Sprintf("%s:%v", host, app.Config.Kafka[cluster].ZookeeperPort)
+		zkhosts[i] = fmt.Sprintf("%s", host)
 	}
 	zkconn, _, err := zk.Connect(zkhosts, time.Duration(app.Config.Zookeeper.Timeout)*time.Second)
 	if err != nil {

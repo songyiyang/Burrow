@@ -373,7 +373,7 @@ func (storage *OffsetStorage) evaluateGroup(cluster string, group string, result
 				offsetList[topic][partition][idx] = *ptr
 
 				// Track the youngest offset we have found to check expiration
-				if offsetList[topic][partition][idx].Timestamp > youngestOffset {
+				if offsetList[topic][partition][idx].Timestamp < youngestOffset {
 					youngestOffset = offsetList[topic][partition][idx].Timestamp
 				}
 			})

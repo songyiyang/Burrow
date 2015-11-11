@@ -17,6 +17,7 @@ import (
 	"github.com/samuel/go-zookeeper/zk"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 	"time"
 )
@@ -172,28 +173,6 @@ func burrowMain() int {
 		}
 		defer client.Stop()
 
-		zkOffsetPaths := appContext.Config.Kafka[cluster].ZookeeperOffsetPaths
-		if zkOffsetPaths != nil {
-			log.Infof("Starting Kafka offset client for cluster %s. Offset paths is %s", cluster, zkOffsetPaths)
-			zkOffsetClient, err := NewZooKeeperOffsetClient(appContext, cluster)
-			if err != nil {
-				log.Criticalf("Cannot start Kafka offset client for cluster %s: %v", cluster, err)
-				return 1
-			}
-			defer zkOffsetClient.Stop()
-		}
-
-		stormOffsetPaths := appContext.Config.Kafka[cluster].StormOffsetPaths
-		if stormOffsetPaths != nil {
-			log.Infof("Starting Storm offset client for cluster %s. Offset paths is %s", cluster, stormOffsetPaths)
-			stormOffsetClient, err := NewStormOffsetClient(appContext, cluster)
-			if err != nil {
-				log.Criticalf("Cannot start Storm offset client for cluster %s: %v", cluster, err)
-				return 1
-			}
-			defer stormOffsetClient.Stop()
-		}
-
 		appContext.Clusters[cluster] = &KafkaCluster{Client: client, Zookeeper: zkconn}
 	}
 
@@ -222,6 +201,8 @@ func burrowMain() int {
 }
 
 func main() {
+	runtime.GOMAXPROCS(runtime.NumCPU())
+
 	rv := burrowMain()
 	if rv != 0 {
 		fmt.Println("Burrow failed at", time.Now().Format("January 2, 2006 at 3:04pm (MST)"))

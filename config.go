@@ -11,9 +11,9 @@
 package main
 
 import (
-	"code.google.com/p/gcfg"
 	"errors"
 	"fmt"
+	"gopkg.in/gcfg.v1"
 	"log"
 	"net"
 	"net/url"
@@ -43,20 +43,20 @@ type BurrowConfig struct {
 		Brokers       []string `gcfg:"broker"`
 		BrokerPort    int      `gcfg:"broker-port"`
 		Zookeepers    []string `gcfg:"zookeeper"`
+		ZookeeperPort int      `gcfg:"zookeeper-port"`
 		ZookeeperPath string   `gcfg:"zookeeper-path"`
 		OffsetsTopic  string   `gcfg:"offsets-topic"`
-		ZookeeperOffsetPaths	[]string	`gcfg:"zookeeper-offsets-path"`
-		StormOffsetPaths		[]string	`gcfg:"storm-offsets-path"`
+		ZKOffsets     bool     `gcfg:"zookeeper-offsets"`
 	}
 	Tickers struct {
 		BrokerOffsets int `gcfg:"broker-offsets"`
-		ZooKeeperOffsets int `gcfg:"zookeeper-offsets"`
-		StormOffsets int `gcfg:"storm-offsets"`
 	}
 	Lagcheck struct {
-		Intervals   int   `gcfg:"intervals"`
-		MinDistance int64 `gcfg:"min-distance"`
-		ExpireGroup int64 `gcfg:"expire-group"`
+		Intervals      int   `gcfg:"intervals"`
+		MinDistance    int64 `gcfg:"min-distance"`
+		ExpireGroup    int64 `gcfg:"expire-group"`
+		ZKCheck        int64 `gcfg:"zookeeper-interval"`
+		ZKGroupRefresh int64 `gcfg:"zk-group-refresh"`
 	}
 	Httpserver struct {
 		Enable bool `gcfg:"server"`
@@ -82,6 +82,8 @@ type BurrowConfig struct {
 		Extras         []string `gcfg:"extra"`
 		TemplatePost   string   `gcfg:"template-post"`
 		TemplateDelete string   `gcfg:"template-delete"`
+		Timeout        int      `gcfg:"timeout"`
+		Keepalive      int      `gcfg:"keepalive"`
 	}
 }
 
@@ -169,17 +171,24 @@ func ValidateConfig(app *ApplicationContext) error {
 				errs = append(errs, hostlistError)
 			}
 		}
+		if cfg.ZookeeperPort == 0 {
+			cfg.ZookeeperPort = 2181
+		}
 		if len(cfg.Zookeepers) == 0 {
 			errs = append(errs, fmt.Sprintf("No Zookeeper hosts specified for cluster %s", cluster))
 		} else {
-			hostlistError := checkHostlist(cfg.Zookeepers, 2181, "Zookeeper")
+			hostlistError := checkHostlist(cfg.Zookeepers, cfg.ZookeeperPort, "Zookeeper")
 			if hostlistError != "" {
 				errs = append(errs, hostlistError)
 			}
 		}
-		if cfg.ZookeeperPath == "" {
+		switch cfg.ZookeeperPath {
+		case "":
 			errs = append(errs, fmt.Sprintf("Zookeeper path is not specified for cluster %s", cluster))
-		} else {
+		case "/":
+			// If we're using the root path, instead of chroot, set it blank here so we don't get double slashes
+			cfg.ZookeeperPath = ""
+		default:
 			if !validateZookeeperPath(cfg.ZookeeperPath) {
 				errs = append(errs, fmt.Sprintf("Zookeeper path is not valid for cluster %s", cluster))
 			}
@@ -204,6 +213,15 @@ func ValidateConfig(app *ApplicationContext) error {
 	}
 	if app.Config.Lagcheck.ExpireGroup == 0 {
 		app.Config.Lagcheck.ExpireGroup = 604800
+	}
+	if app.Config.Lagcheck.ZKCheck == 0 {
+		app.Config.Lagcheck.ZKCheck = 60
+	}
+	if app.Config.Lagcheck.MinDistance == 0 {
+		app.Config.Lagcheck.MinDistance = 1
+	}
+	if app.Config.Lagcheck.ZKGroupRefresh == 0 {
+		app.Config.Lagcheck.ZKGroupRefresh = 300
 	}
 
 	// HTTP Server
@@ -255,8 +273,12 @@ func ValidateConfig(app *ApplicationContext) error {
 						errs = append(errs, "Email notification groups must be specified as 'cluster,groupname'")
 						break
 					}
+					if _, ok := app.Config.Kafka[groupParts[0]]; !ok {
+						errs = append(errs, "One or more email notification groups has a bad cluster name")
+						break
+					}
 					if !validateTopic(groupParts[1]) {
-						errs = append(errs, "One or more email notification groups are invalid")
+						errs = append(errs, "One or more email notification groups has an invalid group name")
 						break
 					}
 				}

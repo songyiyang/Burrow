@@ -272,7 +272,7 @@ func (storage *OffsetStorage) addConsumerOffset(offset *PartitionOffset) {
 	if storage.offsets[offset.Cluster].consumer[offset.Group][offset.Topic][offset.Partition] == nil {
 		storage.offsets[offset.Cluster].consumer[offset.Group][offset.Topic][offset.Partition] = ring.New(storage.app.Config.Lagcheck.Intervals)
 	} else {
-		// The minimum time as configured since the last offset commit has gone by
+		// Prevent old offset commits, and new commits that are too fast (less than the min-distance config)
 		previousTimestamp := storage.offsets[offset.Cluster].consumer[offset.Group][offset.Topic][offset.Partition].Prev().Value.(*ConsumerOffset).Timestamp
 		if offset.Timestamp-previousTimestamp < (storage.app.Config.Lagcheck.MinDistance * 1000) {
 			storage.offsets[offset.Cluster].consumerLock.Unlock()
@@ -343,6 +343,12 @@ func (storage *OffsetStorage) evaluateGroup(cluster string, group string, result
 		Maxlag:     nil,
 	}
 
+	// Make sure the cluster exists
+	if _, ok := storage.offsets[cluster]; !ok {
+		resultChannel <- status
+		return
+	}
+
 	// Make sure the group even exists
 	storage.offsets[cluster].consumerLock.RLock()
 	if _, ok := storage.offsets[cluster].consumer[group]; !ok {
@@ -359,7 +365,7 @@ func (storage *OffsetStorage) evaluateGroup(cluster string, group string, result
 		offsetList[topic] = make([][]ConsumerOffset, len(partitions))
 		for partition, offsetRing := range partitions {
 			// If we don't have our ring full yet, make sure we let the caller know
-			if (offsetRing == nil) || (offsetRing.Prev().Value == nil) || (offsetRing.Value == nil) {
+			if (offsetRing == nil) || (offsetRing.Value == nil) {
 				status.Complete = false
 				continue
 			}
@@ -381,7 +387,7 @@ func (storage *OffsetStorage) evaluateGroup(cluster string, group string, result
 	}
 	storage.offsets[cluster].consumerLock.RUnlock()
 
-	// If the youngest offset is older than our expiration window, flush the group
+	// If the youngest offset is earlier than our expiration window, flush the group
 	if (youngestOffset > 0) && (youngestOffset < ((time.Now().Unix() - storage.app.Config.Lagcheck.ExpireGroup) * 1000)) {
 		storage.offsets[cluster].consumerLock.Lock()
 		log.Infof("Removing expired group %s from cluster %s", group, cluster)
@@ -423,14 +429,6 @@ func (storage *OffsetStorage) evaluateGroup(cluster string, group string, result
 				status.Maxlag = thispart
 			}
 
-			// Rule 4 - Offsets haven't been committed in a while
-			if ((time.Now().Unix() * 1000) - offsets[maxidx].Timestamp) > (offsets[maxidx].Timestamp - offsets[0].Timestamp) {
-				status.Status = StatusError
-				thispart.Status = StatusStop
-				status.Partitions = append(status.Partitions, thispart)
-				continue
-			}
-
 			// Rule 6 - Did the consumer offsets rewind at any point?
 			// We check this first because we always want to know about a rewind - it's bad behavior
 			for i := 1; i <= maxidx; i++ {
@@ -442,50 +440,51 @@ func (storage *OffsetStorage) evaluateGroup(cluster string, group string, result
 				}
 			}
 
-			// Rule 1
-			if offsets[maxidx].Lag == 0 {
+			// Rule 1 shortcuts
+			if (offsets[0].Lag == 0) || offsets[maxidx].Lag == 0 {
 				if showall {
 					status.Partitions = append(status.Partitions, thispart)
 				}
 				continue
 			}
-			if offsets[maxidx].Offset == offsets[0].Offset {
-				// Rule 1
-				if offsets[0].Lag == 0 {
-					if showall {
-						status.Partitions = append(status.Partitions, thispart)
-					}
-					continue
-				}
 
+			lagDropped := false
+			zeroLag := false
+			for i := 0; i <= maxidx; i++ {
+				if offsets[i].Lag == 0 {
+					zeroLag = true
+					break
+				}else if ((i > 0) && (offsets[i].Lag < offsets[i-1].Lag)) {
+					lagDropped = true
+				}
+			}
+
+			if zeroLag {
+				// Rule 1
+				if showall {
+					status.Partitions = append(status.Partitions, thispart)
+				}
+				continue
+			}else if lagDropped {
+				// Rule 3
+				if status.Status == StatusOK {
+					status.Status = StatusWarning
+				}
+				thispart.Status = StatusWarning
+			}else {
 				// Rule 2
+				status.Partitions = append(status.Partitions, thispart)
 				status.Status = StatusError
 				thispart.Status = StatusStall
-			} else {
-				// Rule 1 passes, or shortcut a full check on Rule 3 if we can
-				if (offsets[0].Lag == 0) || (offsets[maxidx].Lag <= offsets[0].Lag) {
-					if showall {
-						status.Partitions = append(status.Partitions, thispart)
-					}
-					continue
-				}
+				continue
+			}
 
-				lagDropped := false
-				for i := 0; i <= maxidx; i++ {
-					// Rule 1 passes or Rule 3 is shortcut (lag dropped somewhere in the period)
-					if (offsets[i].Lag == 0) || ((i > 0) && (offsets[i].Lag < offsets[i-1].Lag)) {
-						lagDropped = true
-						break
-					}
-				}
-
-				if !lagDropped {
-					// Rule 3
-					if status.Status == StatusOK {
-						status.Status = StatusWarning
-					}
-					thispart.Status = StatusWarning
-				}
+			// Rule 4 - Offsets haven't been committed in a while
+			if ((time.Now().Unix() * 1000) - offsets[maxidx].Timestamp) > (offsets[maxidx].Timestamp - offsets[0].Timestamp) {
+				status.Status = StatusError
+				thispart.Status = StatusStop
+				status.Partitions = append(status.Partitions, thispart)
+				continue
 			}
 
 			// Always add the partition if it's not OK

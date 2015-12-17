@@ -274,7 +274,7 @@ func (storage *OffsetStorage) addConsumerOffset(offset *PartitionOffset) {
 	} else {
 		// Prevent old offset commits, and new commits that are too fast (less than the min-distance config)
 		previousTimestamp := storage.offsets[offset.Cluster].consumer[offset.Group][offset.Topic][offset.Partition].Prev().Value.(*ConsumerOffset).Timestamp
-		if offset.Timestamp-previousTimestamp < (storage.app.Config.Lagcheck.MinDistance * 1000) {
+		if offset.Timestamp-previousTimestamp < (storage.app.Config.Lagcheck.MinDistance * 1000) && offset.Timestamp-previousTimestamp != 0{
 			storage.offsets[offset.Cluster].consumerLock.Unlock()
 			return
 		}

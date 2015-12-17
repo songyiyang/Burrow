@@ -40,13 +40,18 @@ type BurrowConfig struct {
 		LockPath string   `gcfg:"lock-path"`
 	}
 	Kafka map[string]*struct {
-		Brokers       []string `gcfg:"broker"`
-		BrokerPort    int      `gcfg:"broker-port"`
-		Zookeepers    []string `gcfg:"zookeeper"`
-		ZookeeperPort int      `gcfg:"zookeeper-port"`
-		ZookeeperPath string   `gcfg:"zookeeper-path"`
-		OffsetsTopic  string   `gcfg:"offsets-topic"`
-		ZKOffsets     bool     `gcfg:"zookeeper-offsets"`
+		Brokers       	[]string 	`gcfg:"broker"`
+		BrokerPort    	int      	`gcfg:"broker-port"`
+		Zookeepers    	[]string 	`gcfg:"zookeeper"`
+		ZookeeperPort 	int      	`gcfg:"zookeeper-port"`
+		ZookeeperPath 	string   	`gcfg:"zookeeper-path"`
+		OffsetsTopic  	string   	`gcfg:"offsets-topic"`
+		ZKOffsets     	bool     	`gcfg:"zookeeper-offsets"`
+	}
+	Storm map[string]*struct {
+		Zookeepers    	[]string 	`gcfg:"zookeeper"`
+		ZookeeperPort 	int      	`gcfg:"zookeeper-port"`
+		ZookeeperPath 	string   	`gcfg:"zookeeper-path"`
 	}
 	Tickers struct {
 		BrokerOffsets int `gcfg:"broker-offsets"`
@@ -57,6 +62,8 @@ type BurrowConfig struct {
 		ExpireGroup    int64 `gcfg:"expire-group"`
 		ZKCheck        int64 `gcfg:"zookeeper-interval"`
 		ZKGroupRefresh int64 `gcfg:"zk-group-refresh"`
+		StormCheck        int64 `gcfg:"storm-interval"`
+		StormGroupRefresh int64 `gcfg:"storm-group-refresh"`
 	}
 	Httpserver struct {
 		Enable bool `gcfg:"server"`
@@ -202,6 +209,30 @@ func ValidateConfig(app *ApplicationContext) error {
 		}
 	}
 
+	// Storm Clusters
+	if len(app.Config.Storm) > 0 {
+		for cluster, cfg := range app.Config.Storm {
+			if cfg.ZookeeperPort == 0 {
+				cfg.ZookeeperPort = 2181
+			}
+			if len(cfg.Zookeepers) == 0 {
+				errs = append(errs, fmt.Sprintf("No Zookeeper hosts specified for cluster %s", cluster))
+			} else {
+				hostlistError := checkHostlist(cfg.Zookeepers, cfg.ZookeeperPort, "Zookeeper")
+				if hostlistError != "" {
+					errs = append(errs, hostlistError)
+				}
+			}
+			if cfg.ZookeeperPath == "" {
+				errs = append(errs, fmt.Sprintf("Zookeeper path is not specified for cluster %s", cluster))
+			} else {
+				if !validateZookeeperPath(cfg.ZookeeperPath) {
+					errs = append(errs, fmt.Sprintf("Zookeeper path is not valid for cluster %s", cluster))
+				}
+			}
+		}
+	}
+
 	// Tickers
 	if app.Config.Tickers.BrokerOffsets == 0 {
 		app.Config.Tickers.BrokerOffsets = 60
@@ -217,11 +248,17 @@ func ValidateConfig(app *ApplicationContext) error {
 	if app.Config.Lagcheck.ZKCheck == 0 {
 		app.Config.Lagcheck.ZKCheck = 60
 	}
+	if app.Config.Lagcheck.StormCheck == 0 {
+		app.Config.Lagcheck.StormCheck = 60
+	}
 	if app.Config.Lagcheck.MinDistance == 0 {
 		app.Config.Lagcheck.MinDistance = 1
 	}
 	if app.Config.Lagcheck.ZKGroupRefresh == 0 {
 		app.Config.Lagcheck.ZKGroupRefresh = 300
+	}
+	if app.Config.Lagcheck.StormGroupRefresh == 0 {
+		app.Config.Lagcheck.StormGroupRefresh = 300
 	}
 
 	// HTTP Server
@@ -400,20 +437,39 @@ func validateUrl(rawUrl string) bool {
 func checkHostlist(hosts []string, defaultPort int, appName string) string {
 	for i, host := range hosts {
 		hostparts := strings.Split(host, ":")
-		if !validateHostname(hostparts[0]) {
+		hostport := defaultPort
+		hostname := hostparts[0]
+
+		if len(hostparts) == 2 {
+			// Must be a hostname or IPv4 address with a port
+			var err error
+			hostport, err = strconv.Atoi(hostparts[1])
+			if (err != nil) || (hostport == 0) {
+				return fmt.Sprintf("One or more %s hostnames have invalid port components", appName)
+			}
+		}
+
+		if len(hostparts) > 2 {
+			// Must be an IPv6 address
+			// Try without popping off the last segment as a port number first
+			if validateIP(host) {
+				hostname = host
+			} else {
+				// The full host didn't validate as an IP, so let's pull off the last piece as a port number and try again
+				hostname = strings.Join(hostparts[:len(hostparts)-1], ":")
+
+				hostport, err := strconv.Atoi(hostparts[len(hostparts)-1])
+				if (err != nil) || (hostport == 0) {
+					return fmt.Sprintf("One or more %s hostnames have invalid port components", appName)
+				}
+			}
+		}
+
+		if !validateHostname(hostname) {
 			return fmt.Sprintf("One or more %s hostnames are invalid", appName)
 		}
 
-		if len(hostparts) == 2 {
-			hostport, err := strconv.Atoi(hostparts[1])
-			if (err == nil) && (hostport > 0) {
-				hosts[i] = fmt.Sprintf("%s:%v", hostparts[0], hostport)
-			} else {
-				return fmt.Sprintf("One or more %s hostnames have invalid port components", appName)
-			}
-		} else {
-			hosts[i] = fmt.Sprintf("%s:%v", hostparts[0], defaultPort)
-		}
+		hosts[i] = fmt.Sprintf("[%s]:%v", hostname, hostport)
 	}
 
 	return ""

@@ -246,7 +246,7 @@ func (storage *OffsetStorage) addConsumerOffset(offset *PartitionOffset) {
 
 	// Get broker partition count and offset for this topic and partition first
 	storage.offsets[offset.Cluster].brokerLock.RLock()
-	if topic, ok := storage.offsets[offset.Cluster].broker[offset.Topic]; !ok || (ok && ((int32(len(topic)) <= offset.Partition) || (topic[offset.Partition] == nil))) {
+	if topic, ok := storage.offsets[offset.Cluster].broker[offset.Topic]; !ok || (ok && ((int32(len(topic)) < offset.Partition) || (topic[offset.Partition] == nil))) {
 		// If we don't have the partition or offset from the broker side yet, ignore the consumer offset for now
 		storage.offsets[offset.Cluster].brokerLock.RUnlock()
 		return
@@ -274,7 +274,7 @@ func (storage *OffsetStorage) addConsumerOffset(offset *PartitionOffset) {
 	} else {
 		// Prevent old offset commits, and new commits that are too fast (less than the min-distance config)
 		previousTimestamp := storage.offsets[offset.Cluster].consumer[offset.Group][offset.Topic][offset.Partition].Prev().Value.(*ConsumerOffset).Timestamp
-		if offset.Timestamp-previousTimestamp < (storage.app.Config.Lagcheck.MinDistance * 1000) {
+		if offset.Timestamp-previousTimestamp < (storage.app.Config.Lagcheck.MinDistance * 1000) && offset.Timestamp-previousTimestamp != 0{
 			storage.offsets[offset.Cluster].consumerLock.Unlock()
 			return
 		}

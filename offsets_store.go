@@ -53,6 +53,7 @@ type OffsetStorage struct {
 	requestChannel chan interface{}
 	offsets        map[string]*ClusterOffsets
 	groupBlacklist *regexp.Regexp
+	topicBlacklist *regexp.Regexp
 }
 
 type StatusConstant int
@@ -156,6 +157,14 @@ func NewOffsetStorage(app *ApplicationContext) (*OffsetStorage, error) {
 		storage.groupBlacklist = re
 	}
 
+	if app.Config.General.TopicBlacklist != "" {
+		re, err := regexp.Compile(app.Config.General.TopicBlacklist)
+		if err != nil {
+			return nil, err
+		}
+		storage.topicBlacklist = re
+	}
+
 	for cluster, _ := range app.Config.Kafka {
 		storage.offsets[cluster] = &ClusterOffsets{
 			broker:       make(map[string][]*BrokerOffset),
@@ -240,7 +249,7 @@ func (storage *OffsetStorage) addConsumerOffset(offset *PartitionOffset) {
 	}
 
 	// Ignore groups that match our blacklist
-	if (storage.groupBlacklist != nil) && storage.groupBlacklist.MatchString(offset.Group) {
+	if (storage.groupBlacklist != nil) && storage.groupBlacklist.MatchString(offset.Group) || (storage.topicBlacklist != nil) && storage.topicBlacklist.MatchString(offset.Topic) {
 		return
 	}
 

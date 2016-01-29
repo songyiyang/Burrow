@@ -139,6 +139,10 @@ func (zkClient *ZookeeperClient) getOffsetsForConsumerGroup(consumerGroup string
 	case err == nil:
 		// Spawn a goroutine for each topic. This provides parallelism for multi-topic consumers
 		for _, topic := range topics {
+			if (zkClient.app.Storage.topicBlacklist != nil) && zkClient.app.Storage.topicBlacklist.MatchString(topic) {
+				log.Debugf("Skip checking ZK offsets for topic %s from group %s in cluster %s as topic has been blacklisted", topic, consumerGroup, zkClient.cluster)
+				continue
+			}
 			go zkClient.getOffsetsForTopic(consumerGroup, topic)
 		}
 	case err == zk.ErrNoNode:

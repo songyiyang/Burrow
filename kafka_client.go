@@ -234,6 +234,9 @@ func (client *KafkaClient) RefreshTopicMap() {
 	client.topicMapLock.Lock()
 	topics, _ := client.client.Topics()
 	for _, topic := range topics {
+		if (client.app.Storage.topicBlacklist != nil) && client.app.Storage.topicBlacklist.MatchString(topic) {
+			continue
+		}
 		partitions, _ := client.client.Partitions(topic)
 		client.topicMap[topic] = len(partitions)
 	}

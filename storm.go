@@ -137,6 +137,10 @@ func (stormClient *StormClient) getOffsetsForPartition(consumerGroup string, par
 	switch {
 	case err == nil:
 		offset, topic, errConversion := parseStormSpoutStateJson(string(stateStr))
+		if (stormClient.app.Storage.topicBlacklist != nil) && stormClient.app.Storage.topicBlacklist.MatchString(topic) {
+			log.Debugf("Skip checking Storn offsets for topic %s from group %s in cluster %s as topic has been blacklisted", topic, consumerGroup, stormClient.cluster)
+			return
+		}
 		switch {
 		case errConversion == nil:
 			log.Debugf("About to sync Storm offset: [%s,%s,%v]::[%v,%v]\n", consumerGroup, topic, partition, offset, zkNodeStat.Mtime)

@@ -24,6 +24,11 @@ import (
 )
 
 // Configuration definition
+type ClientProfile struct {
+	ClientID    string `gcfg:"client-id"`
+	TLS         bool   `gcfg:"tls"`
+	TLSNoVerify bool   `gcfg:"tls-noverify"`
+}
 type BurrowConfig struct {
 	General struct {
 		LogDir         string `gcfg:"logdir"`
@@ -41,28 +46,29 @@ type BurrowConfig struct {
 		LockPath string   `gcfg:"lock-path"`
 	}
 	Kafka map[string]*struct {
-		Brokers       	[]string 	`gcfg:"broker"`
-		BrokerPort    	int      	`gcfg:"broker-port"`
-		Zookeepers    	[]string 	`gcfg:"zookeeper"`
-		ZookeeperPort 	int      	`gcfg:"zookeeper-port"`
-		ZookeeperPath 	string   	`gcfg:"zookeeper-path"`
-		OffsetsTopic  	string   	`gcfg:"offsets-topic"`
-		ZKOffsets     	bool     	`gcfg:"zookeeper-offsets"`
+		Brokers       []string `gcfg:"broker"`
+		BrokerPort    int      `gcfg:"broker-port"`
+		Zookeepers    []string `gcfg:"zookeeper"`
+		ZookeeperPort int      `gcfg:"zookeeper-port"`
+		ZookeeperPath string   `gcfg:"zookeeper-path"`
+		OffsetsTopic  string   `gcfg:"offsets-topic"`
+		ZKOffsets     bool     `gcfg:"zookeeper-offsets"`
+		Clientprofile string   `gcfg:"client-profile"`
 	}
 	Storm map[string]*struct {
-		Zookeepers    	[]string 	`gcfg:"zookeeper"`
-		ZookeeperPort 	int      	`gcfg:"zookeeper-port"`
-		ZookeeperPath 	string   	`gcfg:"zookeeper-path"`
+		Zookeepers    []string `gcfg:"zookeeper"`
+		ZookeeperPort int      `gcfg:"zookeeper-port"`
+		ZookeeperPath string   `gcfg:"zookeeper-path"`
 	}
 	Tickers struct {
 		BrokerOffsets int `gcfg:"broker-offsets"`
 	}
 	Lagcheck struct {
-		Intervals      int   `gcfg:"intervals"`
-		MinDistance    int64 `gcfg:"min-distance"`
-		ExpireGroup    int64 `gcfg:"expire-group"`
-		ZKCheck        int64 `gcfg:"zookeeper-interval"`
-		ZKGroupRefresh int64 `gcfg:"zk-group-refresh"`
+		Intervals         int   `gcfg:"intervals"`
+		MinDistance       int64 `gcfg:"min-distance"`
+		ExpireGroup       int64 `gcfg:"expire-group"`
+		ZKCheck           int64 `gcfg:"zookeeper-interval"`
+		ZKGroupRefresh    int64 `gcfg:"zk-group-refresh"`
 		StormCheck        int64 `gcfg:"storm-interval"`
 		StormGroupRefresh int64 `gcfg:"storm-group-refresh"`
 	}
@@ -86,17 +92,24 @@ type BurrowConfig struct {
 	}
 	Httpnotifier struct {
 		Url            string   `gcfg:"url"`
-		Interval       int      `gcfg:"interval"`
+		Interval       int64    `gcfg:"interval"`
 		Extras         []string `gcfg:"extra"`
 		TemplatePost   string   `gcfg:"template-post"`
 		TemplateDelete string   `gcfg:"template-delete"`
+		SendDelete     bool     `gcfg:"send-delete"`
+		PostThreshold  int      `gcfg:"post-threshold"`
 		Timeout        int      `gcfg:"timeout"`
 		Keepalive      int      `gcfg:"keepalive"`
 	}
+	Clientprofile map[string]*ClientProfile
 }
 
 func ReadConfig(cfgFile string) *BurrowConfig {
 	var cfg BurrowConfig
+
+	// Set some non-standard defaults
+	cfg.Httpnotifier.SendDelete = true
+
 	err := gcfg.ReadFileInto(&cfg, cfgFile)
 	if err != nil {
 		log.Fatalf("Failed to parse gcfg data: %s", err)
@@ -163,6 +176,28 @@ func ValidateConfig(app *ApplicationContext) error {
 		}
 	}
 
+	// Kafka Client Profiles
+	// Set up a default profile, if needed
+	if app.Config.Clientprofile == nil {
+		app.Config.Clientprofile = make(map[string]*ClientProfile)
+	}
+	if _, ok := app.Config.Clientprofile["default"]; !ok {
+		app.Config.Clientprofile["default"] = &ClientProfile{
+			ClientID: app.Config.General.ClientID,
+			TLS:      false,
+		}
+	}
+
+	for name, cfg := range app.Config.Clientprofile {
+		if cfg.ClientID == "" {
+			cfg.ClientID = "burrow-client"
+		} else {
+			if !validateTopic(cfg.ClientID) {
+				errs = append(errs, fmt.Sprintf("Kafka client ID is not valid for profile %s", name))
+			}
+		}
+	}
+
 	// Kafka Clusters
 	if len(app.Config.Kafka) == 0 {
 		errs = append(errs, "No Kafka clusters are configured")
@@ -206,6 +241,13 @@ func ValidateConfig(app *ApplicationContext) error {
 		} else {
 			if !validateTopic(cfg.OffsetsTopic) {
 				errs = append(errs, fmt.Sprintf("Kafka offsets topic is not valid for cluster %s", cluster))
+			}
+		}
+		if cfg.Clientprofile == "" {
+			cfg.Clientprofile = "default"
+		} else {
+			if _, ok := app.Config.Clientprofile[cfg.Clientprofile]; !ok {
+				errs = append(errs, fmt.Sprintf("Kafka client profile is not defined for cluster %s", cluster))
 			}
 		}
 	}
@@ -356,6 +398,12 @@ func ValidateConfig(app *ApplicationContext) error {
 		}
 		if _, err := os.Stat(app.Config.Httpnotifier.TemplateDelete); os.IsNotExist(err) {
 			errs = append(errs, "HTTP notifier DELETE template file does not exist")
+		}
+		if app.Config.Httpnotifier.PostThreshold == 0 {
+			app.Config.Httpnotifier.PostThreshold = 2
+		}
+		if (app.Config.Httpnotifier.PostThreshold < 1) || (app.Config.Httpnotifier.PostThreshold > 3) {
+			errs = append(errs, "HTTP notifier post-threshold must be between 1 and 3")
 		}
 		if app.Config.Httpnotifier.Interval == 0 {
 			app.Config.Httpnotifier.Interval = 60

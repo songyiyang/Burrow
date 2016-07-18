@@ -4,3 +4,6 @@ Burrow
 !config
 .idea/
 log
+.idea
+Burrow.iml
+tmp

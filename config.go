@@ -89,6 +89,7 @@ type BurrowConfig struct {
 		Groups    []string `gcfg:"group"`
 		Interval  int      `gcfg:"interval"`
 		Threshold string   `gcfg:"threhsold"`
+		Warning bool `gcfg:"warning"`
 	}
 	Httpnotifier struct {
 		Url            string   `gcfg:"url"`

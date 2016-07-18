@@ -56,7 +56,7 @@ func NewEmailer(app *ApplicationContext) (*Emailer, error) {
 func (emailer *Emailer) Start() {
 	for email, cfg := range emailer.app.Config.Email {
 		emailer.Tickers[email] = time.NewTicker(time.Duration(cfg.Interval) * time.Second)
-		go emailer.sendEmailNotifications(email, cfg.Threshold, cfg.Groups, emailer.Tickers[email].C)
+		go emailer.sendEmailNotifications(email, cfg.Threshold, cfg.Groups, emailer.Tickers[email].C, cfg.Warning)
 	}
 }
 
@@ -87,11 +87,11 @@ func (emailer *Emailer) sendEmail(to string, results []*ConsumerGroupStatus) {
 	}
 }
 
-func (emailer *Emailer) sendEmailNotifications(email string, threshold string, groups []string, ticker <-chan time.Time) {
+func (emailer *Emailer) sendEmailNotifications(email string, threshold string, groups []string, ticker <-chan time.Time, warning bool) {
 	// Convert the config threshold string into a value
-	thresholdVal := StatusWarning
-	if threshold == "ERROR" {
-		thresholdVal = StatusError
+	thresholdVal := StatusError
+	if warning {
+		thresholdVal = StatusWarning
 	}
 
 OUTERLOOP:
